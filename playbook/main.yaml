@@ -1,0 +1,114 @@
+---
+- name: Install tigervnc things
+  hosts: all
+
+  tasks:
+    - name: Fetch the variables from var file
+      include_vars:
+        file: ../vars/main.yml
+
+    - name: install dnf
+      when: ( ansible_distribution == "CentOS" and ansible_distribution_major_version == "7" )
+      yum:
+        name: dnf
+        state: latest
+
+    - name: install epel
+      when: ( ansible_distribution == "CentOS" and ansible_distribution_major_version == "7" )
+      dnf:
+        name:
+          - epel-release
+        state: latest
+
+    - name: stop that damn firewall
+      when: ansible_distribution == "CentOS" 
+      service:
+        name: firewalld
+        state: stopped
+        enabled: no
+          
+    - name: install workstation dependencies
+      when: ( ansible_distribution in [ "CentOS", "Rocky" ] and ansible_distribution_major_version == "8" )
+      dnf:
+        name: '@workstation'
+        state: present
+
+    - name: install workstation dependencies 
+      when: ( ansible_distribution == "CentOS" and ansible_distribution_major_version == "7" )
+      yum:
+        name: '@^gnome-desktop-environment'
+        state: present
+
+    - name: install tigervnc
+      dnf:
+        name:
+          - tigervnc-server
+        state: latest
+
+    - name: add vnc user
+      when: ( ansible_distribution in  [ "CentOS", "Rocky" ] and ansible_distribution_major_version == "8" )
+      template:
+        src: ../templates/vncserver.users.j2
+        dest: /etc/tigervnc/vncserver.users
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: put the default service file in the correct place
+      when: ( ansible_distribution == "CentOS" and ansible_distribution_major_version == "7" )
+      template:
+        src: ../templates/vncserver.service.j2
+        dest: /etc/systemd/system/vncserver@.service
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: create user vnc directory
+      file:
+        path: /home/{{ user }}/.vnc
+        state: directory
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: '0700'
+
+    - name: customize vnc config with input geometry
+      template:
+        src: ../templates/vncconfig.j2
+        dest: /home/{{ user }}/.vnc/config
+        owner: "{{ user }}"
+        group: "{{ user }}"
+        mode: '0644'
+
+    - name: specify gnome session
+      when: ( ansible_distribution in [ "CentOS", "Rocky" ] and ansible_distribution_major_version == "8" )
+      lineinfile: 
+        path: /home/{{ user }}/.vnc/config
+        regex: '^# session='
+        line: 'session=gnome'
+
+    - name: run the daemon reload
+      shell: systemctl daemon-reload
+
+    - name: allow port 5801 into the machine
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        ctstate: NEW
+        destination_port: '5801'
+        jump: ACCEPT
+      when: allowDirect
+
+    - name: allow port 5901 into the machine
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        ctstate: NEW
+        destination_port: '5901'
+        jump: ACCEPT
+      when: allowDirect
+
+    - name: pull down crc to the machine
+      unarchive:
+        src: https://mirror.openshift.com/pub/openshift-v4/clients/crc/latest/crc-linux-amd64.tar.xz
+        dest: /home/{{ user }}/
+        remote_src: yes
